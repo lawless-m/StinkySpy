@@ -55,12 +55,32 @@ fn parse_building_config(filepath: &Path) -> Result<Option<ExtractedBuilding>> {
 
     let mut building = ExtractedBuilding::default();
 
-    // Extract building ID from CreateBuildingDef call
-    // Pattern: CreateBuildingDef("BuildingID", ...)
-    let id_re = Regex::new(r#"CreateBuildingDef\s*\(\s*"(\w+)""#)?;
-    if let Some(cap) = id_re.captures(&content) {
+    // Extract building ID - multiple patterns
+
+    // Pattern 1: string text = "Electrolyzer"; ... CreateBuildingDef(text, ...)
+    // Look for: public const string ID = "BuildingID"
+    let const_id_re = Regex::new(r#"(?:public\s+)?const\s+string\s+ID\s*=\s*"(\w+)""#)?;
+    if let Some(cap) = const_id_re.captures(&content) {
         building.id = cap[1].to_string();
-    } else {
+    }
+
+    // Pattern 2: string text = "BuildingID"; at start of CreateBuildingDef method
+    if building.id.is_empty() {
+        let text_id_re = Regex::new(r#"string\s+text\s*=\s*"(\w+)""#)?;
+        if let Some(cap) = text_id_re.captures(&content) {
+            building.id = cap[1].to_string();
+        }
+    }
+
+    // Pattern 3: Direct string in CreateBuildingDef("BuildingID", ...)
+    if building.id.is_empty() {
+        let direct_id_re = Regex::new(r#"CreateBuildingDef\s*\(\s*"(\w+)""#)?;
+        if let Some(cap) = direct_id_re.captures(&content) {
+            building.id = cap[1].to_string();
+        }
+    }
+
+    if building.id.is_empty() {
         return Ok(None);
     }
 
@@ -85,15 +105,56 @@ fn parse_building_config(filepath: &Path) -> Result<Option<ExtractedBuilding>> {
         building.heat_dtu += cap[1].parse::<f64>().unwrap_or(0.0) * 1000.0; // kW to DTU/s
     }
 
-    // Extract consumed elements
-    // Pattern: new ElementConverter.ConsumedElement(SimHashes.Water, 1f)
-    // Also handles: ConsumedElement(SimHashes.Water, 1f) without 'new'
-    let consumed_re =
-        Regex::new(r"ConsumedElement\s*\(\s*(?:SimHashes\.)?(\w+)\s*,\s*([\d.]+)f?\s*\)")?;
-    for cap in consumed_re.captures_iter(&content) {
+    // Extract consumed elements - multiple patterns
+
+    // Pattern 1: ConsumedElement(new Tag("Water"), 1f, true)
+    let consumed_tag_re =
+        Regex::new(r#"ConsumedElement\s*\(\s*new\s+Tag\s*\(\s*"(\w+)"\s*\)\s*,\s*([\d.]+)f?"#)?;
+    for cap in consumed_tag_re.captures_iter(&content) {
         let element = cap[1].to_string();
         let rate = cap[2].parse::<f64>().unwrap_or(0.0);
         building.inputs.push((element, rate));
+    }
+
+    // Pattern 2: ConsumedElement(SimHashes.Water, 1f) - older format
+    let consumed_hash_re =
+        Regex::new(r"ConsumedElement\s*\(\s*SimHashes\.(\w+)\s*,\s*([\d.]+)f?")?;
+    for cap in consumed_hash_re.captures_iter(&content) {
+        let element = cap[1].to_string();
+        let rate = cap[2].parse::<f64>().unwrap_or(0.0);
+        if !building.inputs.iter().any(|(e, _)| e == &element) {
+            building.inputs.push((element, rate));
+        }
+    }
+
+    // Pattern 2b: ConsumedElement(GameTagExtensions.Create(SimHashes.Water), 1f, true)
+    let consumed_gametag_re =
+        Regex::new(r"ConsumedElement\s*\(\s*GameTagExtensions\.Create\(SimHashes\.(\w+)\)\s*,\s*([\d.]+)f?")?;
+    for cap in consumed_gametag_re.captures_iter(&content) {
+        let element = cap[1].to_string();
+        let rate = cap[2].parse::<f64>().unwrap_or(0.0);
+        if !building.inputs.iter().any(|(e, _)| e == &element) {
+            building.inputs.push((element, rate));
+        }
+    }
+
+    // Pattern 3: CreateSimpleFormula(input, inputRate, capacity, output, outputRate, ...) for generators
+    // Example: CreateSimpleFormula(SimHashes.Carbon.CreateTag(), 1f, 600f, SimHashes.CarbonDioxide, 0.02f, ...)
+    let formula_re = Regex::new(
+        r"CreateSimpleFormula\s*\(\s*SimHashes\.(\w+)\.CreateTag\(\)\s*,\s*([\d.]+)f?\s*,\s*[\d.]+f?\s*,\s*SimHashes\.(\w+)\s*,\s*([\d.]+)f?"
+    )?;
+    for cap in formula_re.captures_iter(&content) {
+        let in_element = cap[1].to_string();
+        let in_rate = cap[2].parse::<f64>().unwrap_or(0.0);
+        let out_element = cap[3].to_string();
+        let out_rate = cap[4].parse::<f64>().unwrap_or(0.0);
+
+        if !building.inputs.iter().any(|(e, _)| e == &in_element) {
+            building.inputs.push((in_element, in_rate));
+        }
+        if out_element != "Void" && out_rate > 0.0 {
+            building.outputs.push((out_element, out_rate));
+        }
     }
 
     // Extract output elements
@@ -105,18 +166,49 @@ fn parse_building_config(filepath: &Path) -> Result<Option<ExtractedBuilding>> {
         building.outputs.push((element, rate));
     }
 
-    // Also check for ElementConsumer (alternative pattern)
-    // Pattern: elementConsumer.consumptionRate = 0.1f
-    // Pattern: ElementConsumer.Configuration(..., 0.1f, ...)
-    let consumer_re = Regex::new(r"consumptionRate\s*=\s*([\d.]+)f?")?;
-    if building.inputs.is_empty() {
-        if let Some(cap) = consumer_re.captures(&content) {
-            // Try to find what element is being consumed
-            let element_re = Regex::new(r"ElementConsumer.*?SimHashes\.(\w+)")?;
-            if let Some(elem_cap) = element_re.captures(&content) {
-                let rate = cap[1].parse::<f64>().unwrap_or(0.0);
-                building.inputs.push((elem_cap[1].to_string(), rate));
-            }
+    // ElementConsumer patterns (pumps, filters, etc.)
+    // Pattern: elementConsumer.consumptionRate = 0.5f
+    let consumer_rate_re = Regex::new(r"elementConsumer\.consumptionRate\s*=\s*([\d.]+)f?")?;
+    if let Some(cap) = consumer_rate_re.captures(&content) {
+        let rate = cap[1].parse::<f64>().unwrap_or(0.0);
+
+        // Determine element type from Configuration or ConduitType
+        let element = if content.contains("Configuration.AllGas") || content.contains("ConduitType.Gas") {
+            "Gas".to_string()
+        } else if content.contains("Configuration.AllLiquid") || content.contains("ConduitType.Liquid") {
+            "Liquid".to_string()
+        } else if let Some(elem_cap) = Regex::new(r"SimHashes\.(\w+)")?.captures(&content) {
+            elem_cap[1].to_string()
+        } else {
+            "Unknown".to_string()
+        };
+
+        if !building.inputs.iter().any(|(e, _)| e == &element) {
+            building.inputs.push((element, rate));
+        }
+    }
+
+    // ConduitConsumer patterns (buildings that consume from pipes)
+    // Pattern: conduitConsumer.consumptionRate = 1f
+    let conduit_rate_re = Regex::new(r"conduitConsumer\.consumptionRate\s*=\s*([\d.]+)f?")?;
+    if let Some(cap) = conduit_rate_re.captures(&content) {
+        let rate = cap[1].parse::<f64>().unwrap_or(0.0);
+
+        // Determine element type from capacityTag or conduitType
+        let element = if let Some(tag_cap) = Regex::new(r"capacityTag\s*=\s*(?:ElementLoader\.FindElementByHash\()?SimHashes\.(\w+)")?.captures(&content) {
+            tag_cap[1].to_string()
+        } else if let Some(tag_cap) = Regex::new(r"capacityTag\s*=\s*GameTagExtensions\.Create\(SimHashes\.(\w+)\)")?.captures(&content) {
+            tag_cap[1].to_string()
+        } else if content.contains("ConduitType.Gas") {
+            "Gas".to_string()
+        } else if content.contains("ConduitType.Liquid") {
+            "Liquid".to_string()
+        } else {
+            "Unknown".to_string()
+        };
+
+        if !building.inputs.iter().any(|(e, _)| e == &element) {
+            building.inputs.push((element, rate));
         }
     }
 
