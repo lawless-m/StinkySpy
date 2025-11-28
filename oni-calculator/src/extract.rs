@@ -147,18 +147,49 @@ fn parse_building_config(filepath: &Path) -> Result<Option<ExtractedBuilding>> {
         building.outputs.push((element, rate));
     }
 
-    // Also check for ElementConsumer (alternative pattern)
-    // Pattern: elementConsumer.consumptionRate = 0.1f
-    // Pattern: ElementConsumer.Configuration(..., 0.1f, ...)
-    let consumer_re = Regex::new(r"consumptionRate\s*=\s*([\d.]+)f?")?;
-    if building.inputs.is_empty() {
-        if let Some(cap) = consumer_re.captures(&content) {
-            // Try to find what element is being consumed
-            let element_re = Regex::new(r"ElementConsumer.*?SimHashes\.(\w+)")?;
-            if let Some(elem_cap) = element_re.captures(&content) {
-                let rate = cap[1].parse::<f64>().unwrap_or(0.0);
-                building.inputs.push((elem_cap[1].to_string(), rate));
-            }
+    // ElementConsumer patterns (pumps, filters, etc.)
+    // Pattern: elementConsumer.consumptionRate = 0.5f
+    let consumer_rate_re = Regex::new(r"elementConsumer\.consumptionRate\s*=\s*([\d.]+)f?")?;
+    if let Some(cap) = consumer_rate_re.captures(&content) {
+        let rate = cap[1].parse::<f64>().unwrap_or(0.0);
+
+        // Determine element type from Configuration or ConduitType
+        let element = if content.contains("Configuration.AllGas") || content.contains("ConduitType.Gas") {
+            "Gas".to_string()
+        } else if content.contains("Configuration.AllLiquid") || content.contains("ConduitType.Liquid") {
+            "Liquid".to_string()
+        } else if let Some(elem_cap) = Regex::new(r"SimHashes\.(\w+)")?.captures(&content) {
+            elem_cap[1].to_string()
+        } else {
+            "Unknown".to_string()
+        };
+
+        if !building.inputs.iter().any(|(e, _)| e == &element) {
+            building.inputs.push((element, rate));
+        }
+    }
+
+    // ConduitConsumer patterns (buildings that consume from pipes)
+    // Pattern: conduitConsumer.consumptionRate = 1f
+    let conduit_rate_re = Regex::new(r"conduitConsumer\.consumptionRate\s*=\s*([\d.]+)f?")?;
+    if let Some(cap) = conduit_rate_re.captures(&content) {
+        let rate = cap[1].parse::<f64>().unwrap_or(0.0);
+
+        // Determine element type from capacityTag or conduitType
+        let element = if let Some(tag_cap) = Regex::new(r"capacityTag\s*=\s*(?:ElementLoader\.FindElementByHash\()?SimHashes\.(\w+)")?.captures(&content) {
+            tag_cap[1].to_string()
+        } else if let Some(tag_cap) = Regex::new(r"capacityTag\s*=\s*GameTagExtensions\.Create\(SimHashes\.(\w+)\)")?.captures(&content) {
+            tag_cap[1].to_string()
+        } else if content.contains("ConduitType.Gas") {
+            "Gas".to_string()
+        } else if content.contains("ConduitType.Liquid") {
+            "Liquid".to_string()
+        } else {
+            "Unknown".to_string()
+        };
+
+        if !building.inputs.iter().any(|(e, _)| e == &element) {
+            building.inputs.push((element, rate));
         }
     }
 
