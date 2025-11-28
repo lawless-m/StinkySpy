@@ -1,14 +1,52 @@
-# Claude Skills Template
+# StinkySpy
 
-This repository contains reusable Claude Code skills for Ramsden International projects.
+Oxygen Not Included tools and Claude Code skills.
 
-## Usage
+![spellbook](images/spellbook.png)
 
-When creating a new project on GitHub:
-1. Click "Use this template"
-2. Create your new repository
-3. Your project will automatically have these skills in `.claude/skills/`
+## ONI Calculator
 
-## Updating Skills
+Production chain calculator for Oxygen Not Included, built in Rust with SQLite.
 
-Skills are maintained in the internal Gogs repository and automatically synced to GitHub.
+Extracts building data directly from decompiled game source - actual game values, not wiki approximations.
+
+### Features
+
+- Building power consumption/generation
+- Input/output rates (kg/s)
+- Heat output (DTU/s)
+- Production chain calculations
+
+### Usage
+
+```bash
+cd oni-calculator
+
+# Extract from decompiled source
+cargo run -- extract ../oni-decompiled/Assembly-CSharp --clear
+
+# Query buildings
+cargo run -- building Electrolyzer
+cargo run -- list-buildings
+cargo run -- list-resources
+
+# Calculate production chains
+cargo run -- calc Oxygen --rate 1.0
+```
+
+### Best Interface
+
+Ask Claude. The database is the backend, Claude is the query interface:
+
+> "How many electrolyzers for a hydrogen generator?"
+> "What produces CO2?"
+> "Which generator runs coolest per watt?"
+
+## Skills
+
+Claude Code skill documents in `.claude/skills/`:
+
+- **ONI Calculator** - How to query the database and fix extraction patterns
+- **Skill Building** - How to create new skill documents
+- **Databases** - RDBMS access patterns
+- **Logging** - UTF-8 file logging for services
