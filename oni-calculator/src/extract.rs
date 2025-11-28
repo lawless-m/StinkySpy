@@ -127,14 +127,33 @@ fn parse_building_config(filepath: &Path) -> Result<Option<ExtractedBuilding>> {
         }
     }
 
-    // Pattern 3: CreateSimpleFormula(SimHashes.X.CreateTag(), rate, ...) for generators
-    let formula_re =
-        Regex::new(r"CreateSimpleFormula\s*\(\s*SimHashes\.(\w+)\.CreateTag\(\)\s*,\s*([\d.]+)f?")?;
-    for cap in formula_re.captures_iter(&content) {
+    // Pattern 2b: ConsumedElement(GameTagExtensions.Create(SimHashes.Water), 1f, true)
+    let consumed_gametag_re =
+        Regex::new(r"ConsumedElement\s*\(\s*GameTagExtensions\.Create\(SimHashes\.(\w+)\)\s*,\s*([\d.]+)f?")?;
+    for cap in consumed_gametag_re.captures_iter(&content) {
         let element = cap[1].to_string();
         let rate = cap[2].parse::<f64>().unwrap_or(0.0);
         if !building.inputs.iter().any(|(e, _)| e == &element) {
             building.inputs.push((element, rate));
+        }
+    }
+
+    // Pattern 3: CreateSimpleFormula(input, inputRate, capacity, output, outputRate, ...) for generators
+    // Example: CreateSimpleFormula(SimHashes.Carbon.CreateTag(), 1f, 600f, SimHashes.CarbonDioxide, 0.02f, ...)
+    let formula_re = Regex::new(
+        r"CreateSimpleFormula\s*\(\s*SimHashes\.(\w+)\.CreateTag\(\)\s*,\s*([\d.]+)f?\s*,\s*[\d.]+f?\s*,\s*SimHashes\.(\w+)\s*,\s*([\d.]+)f?"
+    )?;
+    for cap in formula_re.captures_iter(&content) {
+        let in_element = cap[1].to_string();
+        let in_rate = cap[2].parse::<f64>().unwrap_or(0.0);
+        let out_element = cap[3].to_string();
+        let out_rate = cap[4].parse::<f64>().unwrap_or(0.0);
+
+        if !building.inputs.iter().any(|(e, _)| e == &in_element) {
+            building.inputs.push((in_element, in_rate));
+        }
+        if out_element != "Void" && out_rate > 0.0 {
+            building.outputs.push((out_element, out_rate));
         }
     }
 
