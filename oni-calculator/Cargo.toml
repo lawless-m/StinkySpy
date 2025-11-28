@@ -1,0 +1,13 @@
+[package]
+name = "oni-calculator"
+version = "0.1.0"
+edition = "2024"
+description = "Production chain calculator for Oxygen Not Included"
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+regex = "1"
+clap = { version = "4", features = ["derive"] }
+walkdir = "2"
+thiserror = "2"
+anyhow = "1"
