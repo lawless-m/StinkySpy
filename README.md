@@ -2,8 +2,6 @@
 
 Oxygen Not Included tools and Claude Code skills.
 
-![spellbook](images/spellbook.png)
-
 ## ONI Calculator
 
 Production chain calculator for Oxygen Not Included, built in Rust with SQLite.
