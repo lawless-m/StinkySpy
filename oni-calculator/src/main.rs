@@ -18,7 +18,7 @@ use rusqlite::Connection;
 #[command(about = "Production chain calculator for Oxygen Not Included")]
 struct Cli {
     /// Path to the SQLite database
-    #[arg(short, long, default_value = "oni_data.db")]
+    #[arg(short, long, default_value = "/home/matt/Git/StinkySpy/oni_data.db")]
     database: PathBuf,
 
     #[command(subcommand)]
@@ -60,6 +60,42 @@ enum Commands {
     /// Show details for a specific building
     Building {
         /// Building ID
+        id: String,
+    },
+
+    /// List all critters in the database
+    ListCritters,
+
+    /// Show details for a specific critter
+    Critter {
+        /// Critter ID
+        id: String,
+    },
+
+    /// List all recipes in the database
+    ListRecipes,
+
+    /// Show details for a specific recipe
+    Recipe {
+        /// Recipe ID
+        id: String,
+    },
+
+    /// List all plants in the database
+    ListPlants,
+
+    /// Show details for a specific plant
+    Plant {
+        /// Plant ID
+        id: String,
+    },
+
+    /// List all food items in the database
+    ListFoods,
+
+    /// Show details for a specific food item
+    Food {
+        /// Food ID
         id: String,
     },
 
@@ -163,6 +199,142 @@ fn main() -> Result<()> {
                 }
             } else {
                 println!("Building '{}' not found", id);
+            }
+        }
+
+        Commands::ListCritters => {
+            let critters = db::list_critters(&conn)?;
+            if critters.is_empty() {
+                println!("No critters in database. Run 'extract' first.");
+            } else {
+                println!("{:<20} {:<15} {:>12} {:>10}", "Critter", "Species", "Food (kg/c)", "Eff");
+                println!("{}", "-".repeat(62));
+                for c in critters {
+                    println!("{:<20} {:<15} {:>12.1} {:>10.0}%",
+                        c.name, c.species, c.kg_per_cycle, c.conversion_efficiency * 100.0);
+                }
+            }
+        }
+
+        Commands::Critter { id } => {
+            let critters = db::list_critters(&conn)?;
+            if let Some(c) = critters.iter().find(|c| c.id == id) {
+                println!("Critter: {}", c.name);
+                println!("  ID: {}", c.id);
+                println!("  Species: {}", c.species);
+                println!("  Calories per cycle: {}", c.calories_per_cycle);
+                println!("  Food consumption: {} kg/cycle", c.kg_per_cycle);
+                println!("  Conversion efficiency: {:.0}%", c.conversion_efficiency * 100.0);
+                println!("  Min poop size: {} kg", c.min_poop_kg);
+                println!("  Egg mass: {} kg", c.egg_mass_kg);
+                println!("  Pen size: {} tiles per creature", c.pen_size_tiles);
+
+                // Calculate stable capacity (max 96 tiles for Ranch Station bonus)
+                let max_stable_size = 96;
+                let max_per_stable = max_stable_size / c.pen_size_tiles;
+                println!("  Stable capacity: {} critters (in {} tiles)", max_per_stable, max_stable_size);
+
+                let inputs = db::get_critter_inputs(&conn, &id)?;
+                if !inputs.is_empty() {
+                    println!("  Diet (can eat):");
+                    for i in inputs {
+                        if i.resource_id == "ALL_FOODS" {
+                            println!("    All prepared foods (FoodDiet)");
+                        } else {
+                            println!("    {} ({})", i.resource_id, i.food_type);
+                        }
+                    }
+                }
+
+                let outputs = db::get_critter_outputs(&conn, &id)?;
+                if !outputs.is_empty() {
+                    println!("  Outputs:");
+                    for o in outputs {
+                        println!("    {} @ {} kg/cycle", o.resource_id, o.rate_kg_per_cycle);
+                    }
+                }
+            } else {
+                println!("Critter '{}' not found", id);
+            }
+        }
+
+        Commands::ListRecipes => {
+            let recipes = db::list_recipes(&conn)?;
+            if recipes.is_empty() {
+                println!("No recipes in database. Run 'extract' first.");
+            } else {
+                println!("{:<30} {:<25}", "Recipe", "Building");
+                println!("{}", "-".repeat(57));
+                for r in recipes {
+                    println!("{:<30} {:<25}", r.name, r.building_id);
+                }
+            }
+        }
+
+        Commands::Recipe { id } => {
+            println!("Recipe details not yet implemented for '{}'", id);
+            println!("Use 'list-recipes' to see all available recipes.");
+        }
+
+        Commands::ListPlants => {
+            let plants = db::list_plants(&conn)?;
+            if plants.is_empty() {
+                println!("No plants in database. Run 'extract' first.");
+            } else {
+                println!("{:<25} {:>15}", "Plant", "Growth (cycles)");
+                println!("{}", "-".repeat(42));
+                for p in plants {
+                    println!("{:<25} {:>15.1}", p.name, p.growth_duration_cycles);
+                }
+            }
+        }
+
+        Commands::Plant { id } => {
+            let plants = db::list_plants(&conn)?;
+            if let Some(p) = plants.iter().find(|p| p.id == id) {
+                println!("Plant: {}", p.name);
+                println!("  ID: {}", p.id);
+                println!("  Growth duration: {} cycles", p.growth_duration_cycles);
+                println!("  Temperature range:");
+                println!("    Lethal low: {:.1}K", p.temp_lethal_low);
+                println!("    Warning low: {:.1}K", p.temp_warning_low);
+                println!("    Warning high: {:.1}K", p.temp_warning_high);
+                println!("    Lethal high: {:.1}K", p.temp_lethal_high);
+            } else {
+                println!("Plant '{}' not found", id);
+            }
+        }
+
+        Commands::ListFoods => {
+            let foods = db::list_foods(&conn)?;
+            if foods.is_empty() {
+                println!("No foods in database. Run 'extract' first.");
+            } else {
+                println!("{:<25} {:>12} {:>8}", "Food", "Calories", "Quality");
+                println!("{}", "-".repeat(48));
+                for f in foods {
+                    let quality_str = match f.quality {
+                        q if q < 0 => format!("{}", q),
+                        0 => "0".to_string(),
+                        q => format!("+{}", q),
+                    };
+                    println!("{:<25} {:>12.0} {:>8}", f.name, f.calories, quality_str);
+                }
+            }
+        }
+
+        Commands::Food { id } => {
+            let foods = db::list_foods(&conn)?;
+            if let Some(f) = foods.iter().find(|f| f.id == id) {
+                println!("Food: {}", f.name);
+                println!("  ID: {}", f.id);
+                println!("  Calories: {:.0}", f.calories);
+                println!("  Quality: {}", f.quality);
+                println!("  Preservation temp: {:.1}°C", f.preserve_temp_c);
+                println!("  Spoil temp: {:.1}°C", f.spoil_temp_c);
+                println!("  Spoil time: {:.0}s ({:.1} cycles)", f.spoil_time_s, f.spoil_time_s / 600.0);
+            } else {
+                println!("Food '{}' not found", id);
             }
         }
 
